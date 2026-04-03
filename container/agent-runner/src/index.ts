@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import type { RunnerTaskRequest, RuntimeEventEnvelope, ToolRequestEnvelope, ToolResponseEnvelope } from "../../../src/ipc/protocol.js";
+import type { ProviderCredential } from "../../../src/types/runtime.js";
 
 function getArg(flag: string): string | undefined {
   const index = process.argv.indexOf(flag);
@@ -63,7 +64,128 @@ async function runMock(request: RunnerTaskRequest, ipcDir: string, eventsFile: s
   await appendEvent(eventsFile, request.taskId, { type: "done" });
 }
 
+function buildOpenAIEndpoint(request: RunnerTaskRequest): string {
+  const baseUrl =
+    request.provider === "openai-codex"
+      ? process.env.NANOCLAW_OPENAI_CODEX_BASE_URL ?? "https://chatgpt.com/backend-api/codex"
+      : process.env.NANOCLAW_OPENAI_API_BASE_URL ?? "https://api.openai.com/v1";
+  return `${baseUrl.replace(/\/+$/, "")}/responses`;
+}
+
+function buildAuthHeaders(request: RunnerTaskRequest, credential: ProviderCredential): Headers {
+  const headers = new Headers({
+    "Content-Type": "application/json"
+  });
+
+  if (credential.type === "api-key") {
+    headers.set("Authorization", `Bearer ${credential.apiKey}`);
+    return headers;
+  }
+
+  headers.set("Authorization", `Bearer ${credential.accessToken}`);
+  if (credential.accountId && request.provider === "openai-codex") {
+    headers.set("ChatGPT-Account-Id", credential.accountId);
+  }
+  return headers;
+}
+
+function buildInput(request: RunnerTaskRequest): Array<Record<string, unknown>> {
+  return request.messages.map((message) => ({
+    role: message.role,
+    content: [{ type: "input_text", text: message.content }]
+  }));
+}
+
+function extractResponseText(payload: Record<string, unknown>): string {
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+
+  const output = payload.output;
+  if (Array.isArray(output)) {
+    const texts: string[] = [];
+    for (const item of output) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      const content = (item as { content?: unknown }).content;
+      if (!Array.isArray(content)) {
+        continue;
+      }
+
+      for (const part of content) {
+        if (part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string") {
+          texts.push((part as { text: string }).text);
+        }
+      }
+    }
+
+    if (texts.length > 0) {
+      return texts.join("\n").trim();
+    }
+  }
+
+  return "";
+}
+
+async function runProviderRequest(request: RunnerTaskRequest, eventsFile: string): Promise<void> {
+  if (!request.auth) {
+    throw new Error(`Missing auth for ${request.provider}`);
+  }
+
+  const endpoint = buildOpenAIEndpoint(request);
+  const headers = buildAuthHeaders(request, request.auth);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: request.modelId,
+      input: buildInput(request),
+      stream: false
+    })
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    const errorText =
+      typeof payload.error === "string"
+        ? payload.error
+        : typeof (payload.error as { message?: unknown } | undefined)?.message === "string"
+          ? String((payload.error as { message: string }).message)
+          : `Provider request failed with ${response.status}`;
+    throw new Error(errorText);
+  }
+
+  const text = extractResponseText(payload);
+  if (text) {
+    await appendEvent(eventsFile, request.taskId, { type: "message", text });
+  }
+
+  const usage = payload.usage as Record<string, unknown> | undefined;
+  await appendEvent(eventsFile, request.taskId, {
+    type: "done",
+    usage: {
+      provider: request.provider,
+      modelId: request.modelId,
+      finishReason: typeof payload.status === "string" ? payload.status : "completed",
+      tokenUsage: usage
+        ? {
+            inputTokens: typeof usage.input_tokens === "number" ? usage.input_tokens : undefined,
+            outputTokens: typeof usage.output_tokens === "number" ? usage.output_tokens : undefined,
+            totalTokens: typeof usage.total_tokens === "number" ? usage.total_tokens : undefined
+          }
+        : undefined
+    }
+  });
+}
+
 async function runCodex(request: RunnerTaskRequest, eventsFile: string): Promise<void> {
+  if (request.auth) {
+    await runProviderRequest(request, eventsFile);
+    return;
+  }
+
   const outputPath = path.join(path.dirname(eventsFile), "codex-last-message.txt");
   const sessionStatePath = path.join(request.sessionsPath, `${request.sessionId}.json`);
   const prompt = request.messages.map((message) => `${message.role.toUpperCase()}: ${message.content}`).join("\n");
@@ -134,7 +256,15 @@ async function runCodex(request: RunnerTaskRequest, eventsFile: string): Promise
     await appendEvent(eventsFile, request.taskId, { type: "error", error: stderrChunks.join("").trim() });
   }
 
-  await appendEvent(eventsFile, request.taskId, { type: "done", usage: { exitCode } });
+  await appendEvent(eventsFile, request.taskId, {
+    type: "done",
+    usage: {
+      provider: request.provider,
+      modelId: request.modelId,
+      exitCode,
+      finishReason: exitCode === 0 ? "completed" : "failed"
+    }
+  });
 }
 
 async function main(): Promise<void> {

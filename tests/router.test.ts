@@ -33,4 +33,42 @@ describe("router", () => {
       await app.stop();
     }
   });
+
+  it("main-local auth-status reports configured provider auth", async () => {
+    const root = await createTempDir("nanoclaw-router-auth-");
+    const app = await createApp(createTestConfig(root));
+
+    try {
+      app.providerAuth.set({
+        type: "api-key",
+        provider: "openai",
+        apiKey: "test-key"
+      });
+      const channel = app.channels.get("main-local") as MainLocalChannel;
+      await channel.emitInbound("main-local:control", "/auth-status");
+      expect(channel.getSentMessages().at(-1)?.text).toContain("openai: api-key");
+    } finally {
+      await app.stop();
+    }
+  });
+
+  it("main-local can update a group's model", async () => {
+    const root = await createTempDir("nanoclaw-router-model-");
+    const app = await createApp(createTestConfig(root));
+
+    try {
+      const group = app.storage.getRegisteredGroupByAddress("local-dev", "local-dev:default");
+      expect(group).toBeTruthy();
+      const channel = app.channels.get("main-local") as MainLocalChannel;
+      await channel.emitInbound("main-local:control", `/set-model ${group!.id} openai/gpt-5-mini`);
+
+      const updated = app.storage.getRegisteredGroup(group!.id);
+      expect(updated?.runtimeConfig).toEqual({
+        provider: "openai",
+        modelId: "gpt-5-mini"
+      });
+    } finally {
+      await app.stop();
+    }
+  });
 });

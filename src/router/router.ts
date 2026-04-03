@@ -1,7 +1,9 @@
+import type { ProviderAuthService } from "../auth/provider-auth-service.js";
 import type { Channel } from "../channels/registry.js";
 import type { ControlPlane } from "../host/control-plane.js";
 import type { HostService } from "../host/host-service.js";
 import type { RemoteControlService } from "../remote-control/remote-control.js";
+import { parseModelRef } from "../runtime/openai/model-policy.js";
 import type { SqliteStorage } from "../storage/sqlite-storage.js";
 import type { InboundMessage, RegisteredGroup, TaskExecutionResult } from "../types/host.js";
 
@@ -12,7 +14,8 @@ export class Router {
     private readonly storage: SqliteStorage,
     private readonly host: HostService,
     private readonly controlPlane: ControlPlane,
-    private readonly remoteControl: RemoteControlService
+    private readonly remoteControl: RemoteControlService,
+    private readonly providerAuth: ProviderAuthService
   ) {}
 
   public registerChannel(channel: Channel): void {
@@ -95,6 +98,22 @@ export class Router {
       return;
     }
 
+    if (trimmed === "/auth-status") {
+      const rows = this.providerAuth.status();
+      const message =
+        rows.length === 0
+          ? "No provider auth configured"
+          : rows
+              .map((row) =>
+                row.authMode === "oauth"
+                  ? `${row.provider}: oauth expires=${new Date(row.expiresAt ?? 0).toISOString()} account=${row.accountId ?? "n/a"}`
+                  : `${row.provider}: api-key`
+              )
+              .join("\n");
+      await this.sendToGroup(group.id, message);
+      return;
+    }
+
     if (trimmed.startsWith("/register-group ")) {
       const [, channel, externalId, folder] = trimmed.split(/\s+/, 4);
       if (!channel || !externalId || !folder) {
@@ -111,6 +130,35 @@ export class Router {
         groupId: registered.id
       });
       await this.sendToGroup(group.id, `Registered ${registered.channel}:${registered.externalId} as ${registered.folder}`);
+      return;
+    }
+
+    if (trimmed.startsWith("/set-model ")) {
+      const [, groupId, modelText] = trimmed.split(/\s+/, 3);
+      const model = modelText ? parseModelRef(modelText) : null;
+      if (!groupId || !model) {
+        await this.sendToGroup(group.id, "Usage: /set-model <groupId> <openai|openai-codex/model>");
+        return;
+      }
+
+      this.controlPlane.updateGroupRuntime(groupId, model);
+      await this.sendToGroup(group.id, `Updated ${groupId} model to ${model.provider}/${model.modelId}`);
+      return;
+    }
+
+    if (trimmed.startsWith("/get-model ")) {
+      const [, groupId] = trimmed.split(/\s+/, 2);
+      const registered = groupId ? this.storage.getRegisteredGroup(groupId) : null;
+      if (!registered) {
+        await this.sendToGroup(group.id, "Unknown group");
+        return;
+      }
+
+      const current = registered.runtimeConfig;
+      await this.sendToGroup(
+        group.id,
+        current ? `${registered.id}: ${current.provider}/${current.modelId}` : `${registered.id}: default model`
+      );
       return;
     }
 

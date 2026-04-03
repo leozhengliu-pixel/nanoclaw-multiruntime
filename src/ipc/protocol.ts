@@ -1,5 +1,5 @@
 import type { ContainerConfig, RegisteredGroup } from "../types/host.js";
-import type { RuntimeEvent, RuntimeMessage } from "../types/runtime.js";
+import type { ProviderCredential, ProviderId, RuntimeEvent, RuntimeMessage } from "../types/runtime.js";
 
 export interface RunnerTaskRequest {
   taskId: string;
@@ -10,6 +10,9 @@ export interface RunnerTaskRequest {
   groupMemoryFile: string;
   sessionsPath: string;
   messages: RuntimeMessage[];
+  provider: ProviderId;
+  modelId: string;
+  auth?: ProviderCredential;
   codexBinaryPath: string;
   runtimeTimeoutMs: number;
   mode: "codex" | "mock";

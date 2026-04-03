@@ -2,6 +2,31 @@ import type { RegisteredGroup } from "./host.js";
 
 export type RuntimeMessageRole = "system" | "user" | "assistant";
 export type RuntimeExecutionMode = "host" | "container";
+export type ProviderId = "openai" | "openai-codex";
+export type ProviderAuthMode = "api-key" | "oauth";
+
+export interface ModelRef {
+  provider: ProviderId;
+  modelId: string;
+}
+
+export interface ProviderOAuthCredential {
+  type: "oauth";
+  provider: ProviderId;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  accountId?: string;
+  email?: string;
+}
+
+export interface ProviderApiKeyCredential {
+  type: "api-key";
+  provider: ProviderId;
+  apiKey: string;
+}
+
+export type ProviderCredential = ProviderOAuthCredential | ProviderApiKeyCredential;
 
 export interface RuntimeMessage {
   role: RuntimeMessageRole;
@@ -19,6 +44,10 @@ export interface PersistedRuntimeSession {
   runtimeName: string;
   groupId: string;
   externalSessionId?: string;
+  provider?: ProviderId;
+  modelId?: string;
+  authMode?: ProviderAuthMode;
+  accountId?: string;
   metadata?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -30,6 +59,7 @@ export interface RuntimeSessionInput {
   workingDirectory: string;
   memoryFiles: string[];
   runtimeTimeoutMs: number;
+  model?: ModelRef;
   systemInstructions?: string;
   sessionHint?: PersistedRuntimeSession | null;
 }
@@ -37,6 +67,9 @@ export interface RuntimeSessionInput {
 export interface RuntimeSession {
   id: string;
   externalSessionId?: string;
+  provider?: ProviderId;
+  modelId?: string;
+  authMode?: ProviderAuthMode;
   metadata?: Record<string, unknown>;
 }
 
@@ -48,6 +81,8 @@ export interface RuntimeTurnInput {
   messages: RuntimeMessage[];
   memoryFiles: string[];
   sessionsPath?: string;
+  model?: ModelRef;
+  runtimeTimeoutMs: number;
   tools?: RuntimeToolSpec[];
 }
 
@@ -66,7 +101,20 @@ export type RuntimeEvent =
   | { type: "tool_call"; name: string; payload: unknown }
   | { type: "tool_result"; name: string; payload: unknown }
   | { type: "error"; error: string }
-  | { type: "done"; usage?: unknown };
+  | {
+      type: "done";
+      usage?: {
+        provider?: ProviderId;
+        modelId?: string;
+        finishReason?: string;
+        tokenUsage?: {
+          inputTokens?: number;
+          outputTokens?: number;
+          totalTokens?: number;
+        };
+        exitCode?: number | null;
+      };
+    };
 
 export interface AgentRuntime {
   readonly name: string;

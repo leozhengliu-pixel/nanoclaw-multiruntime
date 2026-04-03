@@ -32,6 +32,8 @@ export function createTestConfig(root: string, overrides: Partial<AppConfig> = {
     defaultTrigger: "@Andy",
     mountAllowlistPath: path.resolve(process.cwd(), "config-examples", "mount-allowlist.json"),
     codexHomePath: path.join(root, "codex-home"),
+    openaiApiBaseUrl: "https://api.openai.com/v1",
+    openaiCodexBaseUrl: "https://chatgpt.com/backend-api/codex",
     ...overrides
   };
 }

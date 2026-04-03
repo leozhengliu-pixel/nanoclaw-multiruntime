@@ -103,10 +103,12 @@ export class ContainerRunner {
       yield { type: "done", usage: { exitCode: childExitCode } };
     }
 
-    await new Promise<void>((resolve, reject) => {
-      child.child?.on("error", reject);
-      child.child?.on("close", () => resolve());
-    });
+    if (childExitCode === null) {
+      await new Promise<void>((resolve, reject) => {
+        child.child?.on("error", reject);
+        child.child?.on("close", () => resolve());
+      });
+    }
 
     this.activeRuns.delete(request.taskId);
     this.activeRuns.delete(request.sessionId);
@@ -138,7 +140,9 @@ export class ContainerRunner {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
-          NANOCLAW_AGENT_RUNNER_MODE: this.config.agentRunnerMode
+          NANOCLAW_AGENT_RUNNER_MODE: this.config.agentRunnerMode,
+          NANOCLAW_OPENAI_API_BASE_URL: this.config.openaiApiBaseUrl,
+          NANOCLAW_OPENAI_CODEX_BASE_URL: this.config.openaiCodexBaseUrl
         }
       }
     );
@@ -214,6 +218,10 @@ export class ContainerRunner {
       `HOME=/root`,
       "-e",
       `NANOCLAW_AGENT_RUNNER_MODE=${request.mode}`,
+      "-e",
+      `NANOCLAW_OPENAI_API_BASE_URL=${this.config.openaiApiBaseUrl}`,
+      "-e",
+      `NANOCLAW_OPENAI_CODEX_BASE_URL=${this.config.openaiCodexBaseUrl}`,
       ...mountArgs,
       this.config.containerImage,
       "sleep",

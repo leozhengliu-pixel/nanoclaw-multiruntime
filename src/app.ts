@@ -1,3 +1,4 @@
+import { ProviderAuthService } from "./auth/provider-auth-service.js";
 import { getChannelFactory, getRegisteredChannelNames, type Channel } from "./channels/registry.js";
 import "./channels/index.js";
 import { loadConfig, type AppConfig } from "./config/index.js";
@@ -19,6 +20,7 @@ export interface AppServices {
   config: AppConfig;
   runtime: AgentRuntime;
   storage: SqliteStorage;
+  providerAuth: ProviderAuthService;
   groupManager: GroupManager;
   queue: HostQueue;
   host: HostService;
@@ -54,6 +56,8 @@ async function connectChannels(router: Router): Promise<Map<string, Channel>> {
 
 export async function createApp(config = loadConfig(), runtime?: AgentRuntime): Promise<AppServices> {
   const storage = new SqliteStorage(config.sqlitePath);
+  const providerAuth = new ProviderAuthService(storage, config);
+  await providerAuth.importFromCodexHome();
   const groupManager = new GroupManager(config.groupsRoot, config.sessionsRoot, config.logsRoot);
   const queue = new HostQueue(config.maxConcurrency);
   const remoteControl = new RemoteControlService(storage);
@@ -62,7 +66,7 @@ export async function createApp(config = loadConfig(), runtime?: AgentRuntime): 
 
   // Force allowlist load on startup so config errors fail fast.
   mountSecurity.validateMounts([]);
-  const resolvedRuntime = runtime ?? new CodexRuntime(config.codexBinaryPath, config.runtimeTimeoutMs);
+  const resolvedRuntime = runtime ?? new CodexRuntime(config.codexBinaryPath, config.runtimeTimeoutMs, providerAuth, config.agentRunnerMode);
 
   const host = new HostService(resolvedRuntime, storage, groupManager, queue, config.runtimeTimeoutMs);
   const scheduler = new TaskScheduler(storage, host, config.schedulerPollIntervalMs);
@@ -72,7 +76,7 @@ export async function createApp(config = loadConfig(), runtime?: AgentRuntime): 
     { sendToGroup: async (groupId, text) => routerRef.current!.sendToGroup(groupId, text) },
     config.defaultTrigger
   );
-  const router = new Router(storage, host, controlPlane, remoteControl);
+  const router = new Router(storage, host, controlPlane, remoteControl, providerAuth);
   routerRef.current = router;
 
   if (resolvedRuntime instanceof CodexRuntime) {
@@ -103,8 +107,9 @@ export async function createApp(config = loadConfig(), runtime?: AgentRuntime): 
   return {
     config,
     runtime: resolvedRuntime,
-    storage,
-    groupManager,
+      storage,
+      providerAuth,
+      groupManager,
     queue,
     host,
     scheduler,

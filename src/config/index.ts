@@ -28,6 +28,8 @@ export interface AppConfig {
   defaultTrigger: string;
   mountAllowlistPath: string;
   codexHomePath: string;
+  openaiApiBaseUrl: string;
+  openaiCodexBaseUrl: string;
 }
 
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
@@ -122,6 +124,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, cwd = process.c
     mountAllowlistPath:
       env.NANOCLAW_MOUNT_ALLOWLIST_PATH ??
       path.resolve(cwd, "config-examples", "mount-allowlist.json"),
-    codexHomePath: path.resolve(cwd, env.NANOCLAW_CODEX_HOME_PATH ?? path.join("contexts", "codex-home"))
+    codexHomePath: path.resolve(cwd, env.NANOCLAW_CODEX_HOME_PATH ?? path.join("contexts", "codex-home")),
+    openaiApiBaseUrl: env.NANOCLAW_OPENAI_API_BASE_URL ?? "https://api.openai.com/v1",
+    openaiCodexBaseUrl: env.NANOCLAW_OPENAI_CODEX_BASE_URL ?? "https://chatgpt.com/backend-api/codex"
   };
 }

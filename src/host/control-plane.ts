@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { TaskScheduler } from "../scheduler/task-scheduler.js";
 import type { SqliteStorage } from "../storage/sqlite-storage.js";
-import type { ContainerConfig, RegisteredGroup } from "../types/host.js";
+import type { ContainerConfig, GroupRuntimeConfig, RegisteredGroup } from "../types/host.js";
 
 export interface OutboundMessageSender {
   sendToGroup(groupId: string, text: string): Promise<void>;
@@ -23,6 +23,7 @@ export class ControlPlane {
     isMain?: boolean;
     trigger?: string;
     containerConfig?: ContainerConfig;
+    runtimeConfig?: GroupRuntimeConfig;
   }): RegisteredGroup {
     const group: RegisteredGroup = {
       id: randomUUID(),
@@ -34,6 +35,9 @@ export class ControlPlane {
       containerConfig: input.containerConfig ?? { additionalMounts: [] },
       createdAt: new Date().toISOString()
     };
+    if (input.runtimeConfig) {
+      group.runtimeConfig = input.runtimeConfig;
+    }
 
     this.storage.registerGroup(group);
     return group;
@@ -45,6 +49,10 @@ export class ControlPlane {
 
   public updateGroupMounts(groupId: string, containerConfig: ContainerConfig): void {
     this.storage.updateGroupMounts(groupId, containerConfig);
+  }
+
+  public updateGroupRuntime(groupId: string, runtimeConfig: GroupRuntimeConfig): void {
+    this.storage.updateGroupRuntime(groupId, runtimeConfig);
   }
 
   public scheduleTask(input: { groupId: string; prompt: string; intervalMs?: number; runAt?: string }): { jobId: string } {

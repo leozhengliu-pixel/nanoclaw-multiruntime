@@ -17,7 +17,8 @@ describe("runtime contracts", () => {
       sessionId: session.id,
       workingDirectory: process.cwd(),
       memoryFiles: [],
-      messages: [{ role: "user", content: "hello" }]
+      messages: [{ role: "user", content: "hello" }],
+      runtimeTimeoutMs: 1000
     })) {
       events.push(event.type);
     }

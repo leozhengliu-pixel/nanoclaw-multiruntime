@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { SqliteStorage } from "../storage/sqlite-storage.js";
 import type { HostTask, InboundMessage, TaskExecutionResult } from "../types/host.js";
 import type { AgentRuntime, PersistedRuntimeSession, RuntimeEvent, RuntimeMessage } from "../types/runtime.js";
+import { getDefaultModelRef } from "../runtime/openai/model-policy.js";
 import { GroupManager } from "./group-manager.js";
 import { HostQueue } from "./host-queue.js";
 
@@ -106,13 +107,16 @@ export class HostService {
 
     const previousSession = this.storage.getLatestRuntimeSession(task.groupId, this.runtime.name);
     const memoryFiles = [group.globalMemoryFile, group.groupMemoryFile];
+    const model = registeredGroup.runtimeConfig ?? getDefaultModelRef();
+    const runtimeTimeoutMs = registeredGroup.containerConfig.timeoutMs ?? this.runtimeTimeoutMs;
 
     const session = await this.runtime.createSession({
       groupId: task.groupId,
       group: registeredGroup,
       workingDirectory: group.workspacePath,
       memoryFiles,
-      runtimeTimeoutMs: registeredGroup.containerConfig.timeoutMs ?? this.runtimeTimeoutMs,
+      runtimeTimeoutMs,
+      model,
       sessionHint: previousSession
     });
 
@@ -126,6 +130,18 @@ export class HostService {
 
     if (session.externalSessionId) {
       persistedSession.externalSessionId = session.externalSessionId;
+    }
+    if (session.provider) {
+      persistedSession.provider = session.provider;
+    }
+    if (session.modelId) {
+      persistedSession.modelId = session.modelId;
+    }
+    if (session.authMode) {
+      persistedSession.authMode = session.authMode;
+    }
+    if (session.metadata?.accountId && typeof session.metadata.accountId === "string") {
+      persistedSession.accountId = session.metadata.accountId;
     }
 
     if (session.metadata) {
@@ -144,7 +160,9 @@ export class HostService {
       workingDirectory: group.workspacePath,
       messages: task.messages,
       memoryFiles,
-      sessionsPath: group.sessionsPath
+      sessionsPath: group.sessionsPath,
+      model,
+      runtimeTimeoutMs
     })) {
       if (this.cancelledTaskIds.has(task.id)) {
         finalStatus = "cancelled";

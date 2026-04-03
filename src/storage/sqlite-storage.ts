@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 
 import type {
   ContainerConfig,
+  GroupRuntimeConfig,
   GroupRecord,
   RegisteredGroup,
   RemoteControlEvent,
@@ -35,7 +36,15 @@ interface RegisteredGroupRow {
   is_main: number;
   trigger: string;
   container_config_json: string | null;
+  runtime_config_json: string | null;
   created_at: string;
+}
+
+interface ProviderAuthRow {
+  provider_id: string;
+  credential_json: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export class SqliteStorage {
@@ -66,6 +75,7 @@ export class SqliteStorage {
         is_main INTEGER NOT NULL,
         trigger TEXT NOT NULL,
         container_config_json TEXT,
+        runtime_config_json TEXT,
         created_at TEXT NOT NULL,
         UNIQUE(channel, external_id)
       );
@@ -120,6 +130,13 @@ export class SqliteStorage {
         details_json TEXT,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS provider_auth (
+        provider_id TEXT PRIMARY KEY,
+        credential_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
   }
 
@@ -143,9 +160,9 @@ export class SqliteStorage {
       .prepare(
         `
           INSERT INTO registered_groups (
-            id, channel, external_id, folder, is_main, trigger, container_config_json, created_at
+            id, channel, external_id, folder, is_main, trigger, container_config_json, runtime_config_json, created_at
           ) VALUES (
-            @id, @channel, @externalId, @folder, @isMain, @trigger, @containerConfigJson, @createdAt
+            @id, @channel, @externalId, @folder, @isMain, @trigger, @containerConfigJson, @runtimeConfigJson, @createdAt
           )
           ON CONFLICT(id) DO UPDATE SET
             channel = excluded.channel,
@@ -153,7 +170,8 @@ export class SqliteStorage {
             folder = excluded.folder,
             is_main = excluded.is_main,
             trigger = excluded.trigger,
-            container_config_json = excluded.container_config_json
+            container_config_json = excluded.container_config_json,
+            runtime_config_json = excluded.runtime_config_json
         `
       )
       .run({
@@ -164,6 +182,7 @@ export class SqliteStorage {
         isMain: group.isMain ? 1 : 0,
         trigger: group.trigger,
         containerConfigJson: JSON.stringify(group.containerConfig),
+        runtimeConfigJson: JSON.stringify(group.runtimeConfig ?? null),
         createdAt: group.createdAt
       });
   }
@@ -190,6 +209,55 @@ export class SqliteStorage {
     this.db
       .prepare("UPDATE registered_groups SET container_config_json = ? WHERE id = ?")
       .run(JSON.stringify(containerConfig), groupId);
+  }
+
+  public updateGroupRuntime(groupId: string, runtimeConfig: GroupRuntimeConfig): void {
+    this.db
+      .prepare("UPDATE registered_groups SET runtime_config_json = ? WHERE id = ?")
+      .run(JSON.stringify(runtimeConfig), groupId);
+  }
+
+  public upsertProviderAuth(providerId: string, credential: Record<string, unknown>): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `
+          INSERT INTO provider_auth (provider_id, credential_json, created_at, updated_at)
+          VALUES (@providerId, @credentialJson, @createdAt, @updatedAt)
+          ON CONFLICT(provider_id) DO UPDATE SET
+            credential_json = excluded.credential_json,
+            updated_at = excluded.updated_at
+        `
+      )
+      .run({
+        providerId,
+        credentialJson: JSON.stringify(credential),
+        createdAt: now,
+        updatedAt: now
+      });
+  }
+
+  public getProviderAuth(providerId: string): Record<string, unknown> | null {
+    const row = this.db
+      .prepare("SELECT * FROM provider_auth WHERE provider_id = ?")
+      .get(providerId) as ProviderAuthRow | undefined;
+    if (!row) {
+      return null;
+    }
+
+    return JSON.parse(row.credential_json) as Record<string, unknown>;
+  }
+
+  public listProviderAuth(): Array<{ providerId: string; credential: Record<string, unknown> }> {
+    const rows = this.db.prepare("SELECT * FROM provider_auth ORDER BY provider_id ASC").all() as ProviderAuthRow[];
+    return rows.map((row) => ({
+      providerId: row.provider_id,
+      credential: JSON.parse(row.credential_json) as Record<string, unknown>
+    }));
+  }
+
+  public clearProviderAuth(providerId: string): void {
+    this.db.prepare("DELETE FROM provider_auth WHERE provider_id = ?").run(providerId);
   }
 
   public createTask(input: {
@@ -460,7 +528,7 @@ export class SqliteStorage {
   }
 
   private mapRegisteredGroup(row: RegisteredGroupRow): RegisteredGroup {
-    return {
+    const group: RegisteredGroup = {
       id: row.id,
       channel: row.channel,
       externalId: row.external_id,
@@ -472,6 +540,13 @@ export class SqliteStorage {
         : { additionalMounts: [] },
       createdAt: row.created_at
     };
+    if (row.runtime_config_json) {
+      const runtimeConfig = JSON.parse(row.runtime_config_json) as GroupRuntimeConfig | null;
+      if (runtimeConfig) {
+        group.runtimeConfig = runtimeConfig;
+      }
+    }
+    return group;
   }
 
   private mapTaskRow(row: Record<string, unknown>): {

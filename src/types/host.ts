@@ -1,4 +1,4 @@
-import type { RuntimeEvent, RuntimeMessage } from "./runtime.js";
+import type { ModelRef, RuntimeEvent, RuntimeMessage } from "./runtime.js";
 
 export interface ChannelAddress {
   channel: string;
@@ -22,6 +22,8 @@ export interface ContainerConfig {
   timeoutMs?: number;
 }
 
+export type GroupRuntimeConfig = ModelRef;
+
 export interface GroupRecord {
   id: string;
   createdAt: string;
@@ -36,6 +38,7 @@ export interface RegisteredGroup extends ChannelAddress {
   isMain: boolean;
   trigger: string;
   containerConfig: ContainerConfig;
+  runtimeConfig?: GroupRuntimeConfig;
   createdAt: string;
 }
 

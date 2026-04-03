@@ -8,8 +8,11 @@ import { createTempDir, createTestConfig } from "./test-utils.js";
 describe("app integration", () => {
   it("routes a local-dev message through router and sends outbound reply", async () => {
     const root = await createTempDir("nanoclaw-v2-app-");
-    process.env.NANOCLAW_AGENT_RUNNER_MODE = "mock";
-    const app = await createApp(createTestConfig(root));
+    const app = await createApp(
+      createTestConfig(root, {
+        agentRunnerMode: "mock"
+      })
+    );
 
     try {
       const channel = app.channels.get("local-dev");
@@ -21,7 +24,6 @@ describe("app integration", () => {
       expect(app.storage.listTasks().length).toBe(1);
     } finally {
       await app.stop();
-      delete process.env.NANOCLAW_AGENT_RUNNER_MODE;
     }
   });
 

@@ -17,6 +17,6 @@ export default tseslint.config(
     }
   },
   {
-    ignores: ["dist/**", "data/**", "node_modules/**"]
+    ignores: ["dist/**", "data/**", "node_modules/**", "reference/**"]
   }
 );
