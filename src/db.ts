@@ -342,6 +342,20 @@ export function getMessagesSince(chatJid: string, sinceTimestamp: string, botPre
   return db.prepare(sql).all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
 }
 
+export function getChatHistory(chatJid: string, limit = 100): NewMessage[] {
+  const sql = `
+    SELECT * FROM (
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message,
+             reply_to_message_id, reply_to_message_content, reply_to_sender_name
+      FROM messages
+      WHERE chat_jid = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ) ORDER BY timestamp
+  `;
+  return db.prepare(sql).all(chatJid, limit) as NewMessage[];
+}
+
 export function getLastBotMessageTimestamp(chatJid: string, botPrefix: string): string | undefined {
   const row = db
     .prepare(`SELECT MAX(timestamp) as ts FROM messages WHERE chat_jid = ? AND (is_bot_message = 1 OR content LIKE ?)`)

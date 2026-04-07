@@ -16,7 +16,9 @@ import {
   createExecutionTask,
   createTask as createScheduledTask,
   deleteTask,
+  getAllRegisteredGroups,
   getAllTasks,
+  getChatHistory,
   getExecutionTask,
   getLastBotMessageTimestamp,
   getMessagesSince,
@@ -53,7 +55,7 @@ import { CodexRuntime } from "./runtime/codex/codex-runtime.js";
 import { getDefaultModelRef, parseModelRef } from "./runtime/openai/model-policy.js";
 import { isSenderAllowed, isTriggerAllowed, loadSenderAllowlist, shouldDropMessage } from "./sender-allowlist.js";
 import { computeNextRun, startSchedulerLoop, stopSchedulerLoop } from "./task-scheduler.js";
-import type { AdditionalMount, RegisteredGroup as RootRegisteredGroup, ScheduledTask } from "./types.js";
+import type { AdditionalMount, NewMessage, RegisteredGroup as RootRegisteredGroup, ScheduledTask } from "./types.js";
 import type { ScheduledJob as CompatScheduledJob } from "./types/host.js";
 import type { AgentRuntime, PersistedRuntimeSession, RuntimeEvent, RuntimeMessage } from "./types/runtime.js";
 
@@ -92,6 +94,8 @@ interface InboundEnvelope {
   replyToMessageContent?: string;
   replyToSenderName?: string;
 }
+
+const RUNTIME_HISTORY_LIMIT = 24;
 
 export interface OrchestratorAppFacade {
   config: AppConfig;
@@ -142,6 +146,55 @@ function normalizeTriggeredText(group: RootRegisteredGroup, text: string): strin
   }
 
   return trimmed.replace(triggerPattern, "").trim() || trimmed;
+}
+
+function formatRuntimeMessageContent(message: {
+  content: string;
+  reply_to_sender_name?: string;
+  reply_to_message_content?: string;
+}): string {
+  const parts: string[] = [];
+  if (message.reply_to_sender_name || message.reply_to_message_content) {
+    const replySender = message.reply_to_sender_name ?? "unknown";
+    const replyBody = message.reply_to_message_content?.trim() || "[empty]";
+    parts.push(`Replying to ${replySender}: ${replyBody}`);
+  }
+  parts.push(message.content);
+  return parts.join("\n\n");
+}
+
+function toRuntimeMessage(
+  group: RootRegisteredGroup,
+  message: {
+    content: string;
+    is_bot_message?: boolean;
+    is_from_me?: boolean;
+    reply_to_sender_name?: string;
+    reply_to_message_content?: string;
+  }
+): RuntimeMessage {
+  const role = message.is_bot_message || message.is_from_me ? "assistant" : "user";
+  const normalizedContent =
+    role === "user" ? (normalizeTriggeredText(group, message.content) ?? message.content) : message.content;
+  const formattedMessage: {
+    content: string;
+    reply_to_sender_name?: string;
+    reply_to_message_content?: string;
+  } = {
+    content: normalizedContent
+  };
+
+  if (message.reply_to_sender_name) {
+    formattedMessage.reply_to_sender_name = message.reply_to_sender_name;
+  }
+  if (message.reply_to_message_content) {
+    formattedMessage.reply_to_message_content = message.reply_to_message_content;
+  }
+
+  return {
+    role,
+    content: formatRuntimeMessageContent(formattedMessage)
+  };
 }
 
 function toCompatGroup(jid: string, group: RootRegisteredGroup): CompatRegisteredGroup {
@@ -260,13 +313,7 @@ export async function createOrchestrator(config = loadConfig(), runtimeOverride?
   };
 
   const syncRegisteredGroups = (): Record<string, RootRegisteredGroup> => {
-    const groups = Object.fromEntries(
-      Object.keys({ ...registeredGroups }).map((jid) => [jid, getRegisteredGroup(jid) ?? registeredGroups[jid]!])
-    );
-    const storedGroups = Object.entries(registeredGroups).length === 0 ? [] : Object.keys(registeredGroups);
-    for (const jid of storedGroups) {
-      void jid;
-    }
+    const groups = getAllRegisteredGroups();
     registeredGroups = {
       ...registeredGroups,
       ...groups
@@ -393,6 +440,14 @@ export async function createOrchestrator(config = loadConfig(), runtimeOverride?
       : null;
 
     const model = rootGroup.runtimeConfig ?? getDefaultModelRef();
+    const runtimeMessages: RuntimeMessage[] = getChatHistory(groupId, RUNTIME_HISTORY_LIMIT)
+      .filter((message) => message.content.trim().length > 0)
+      .map((message) => toRuntimeMessage(rootGroup, message));
+
+    if (runtimeMessages.length === 0) {
+      runtimeMessages.push({ role: "user", content: prompt });
+    }
+
     const session = await runtime.createSession({
       groupId,
       group: compatGroup as never,
@@ -418,7 +473,7 @@ export async function createOrchestrator(config = loadConfig(), runtimeOverride?
         sessionId: session.id,
         group: compatGroup as never,
         workingDirectory: managedGroup.workspacePath,
-        messages: [{ role: "user", content: prompt }] as RuntimeMessage[],
+        messages: runtimeMessages,
         memoryFiles: [managedGroup.globalMemoryFile, managedGroup.groupMemoryFile],
         sessionsPath: managedGroup.sessionsPath,
         runtimeTimeoutMs: compatGroup.containerConfig.timeoutMs ?? config.runtimeTimeoutMs,

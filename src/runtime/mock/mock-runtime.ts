@@ -14,6 +14,7 @@ export interface MockRuntimeOptions {
   messagePrefix?: string;
   onRunStart?: () => void;
   onRunFinish?: () => void;
+  onTurnInput?: (input: RuntimeTurnInput) => void;
 }
 
 export class MockRuntime implements AgentRuntime {
@@ -39,6 +40,7 @@ export class MockRuntime implements AgentRuntime {
 
   public async *runTurn(input: RuntimeTurnInput): AsyncIterable<RuntimeEvent> {
     this.options.onRunStart?.();
+    this.options.onTurnInput?.(input);
     yield { type: "status", value: "running" };
 
     if (this.options.delayMs) {
